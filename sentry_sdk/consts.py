@@ -1026,6 +1026,8 @@ class ClientConstructor:
         before_send_metric: "Optional[Callable[[Metric, Hint], Optional[Metric]]]" = None,
         org_id: "Optional[str]" = None,
         strict_trace_continuation: bool = False,
+        max_same_errors_per_hour: int | None = None,
+        max_total_errors_per_hour: int | None = None,
     ) -> None:
         """Initialize the Sentry SDK with the given parameters. All parameters described here can be used in a call to `sentry_sdk.init()`.
 

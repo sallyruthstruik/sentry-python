@@ -277,7 +277,18 @@ class _Client(BaseClient):
 
     def __init__(self, *args: "Any", **kwargs: "Any") -> None:
         super(_Client, self).__init__(options=get_options(*args, **kwargs))
-        self._error_throttle = ErrorThrottle()
+        self._error_throttle = None
+
+        if (
+            max_same_errors_per_hour := kwargs.get("max_same_errors_per_hour")
+        ) and (
+            max_total_errors_per_hour := kwargs.get("max_total_errors_per_hour")
+        ):
+            self._error_throttle = ErrorThrottle(
+                max_total_errors_per_hour=max_total_errors_per_hour,
+                max_same_errors_per_hour=max_same_errors_per_hour,
+            )
+
         self._init_impl()
 
     def __getstate__(self) -> "Any":
@@ -843,11 +854,9 @@ class _Client(BaseClient):
 
         :returns: An event ID. May be `None` if there is no DSN set or of if the SDK decided to discard the event for other reasons. In such situations setting `debug=True` on `init()` may help.
         """
-        print("CAPTURE!")
         hint: "Hint" = dict(hint or ())
 
         if not self._should_capture(event, hint, scope):
-            print("NOT CAPTURE")
             return None
 
         profile = event.pop("profile", None)

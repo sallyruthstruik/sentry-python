@@ -16,8 +16,8 @@ class ErrorThrottle:
         max_total_errors_per_hour = 120,
         max_same_errors_per_hour = 60,
     ) -> None:
-        self._max_total_errors_per_hour = max_total_errors_per_hour
-        self._max_same_errors_per_hour = max_same_errors_per_hour
+        self._max_total_errors_per_hour = int(max_total_errors_per_hour)
+        self._max_same_errors_per_hour = int(max_same_errors_per_hour)
         self._last_sendings: "deque[tuple[float, str]]" = deque(maxlen=5000)
         self._lock = threading.Lock()
         self._interval_seconds = 3600       # 1 hour
@@ -25,7 +25,7 @@ class ErrorThrottle:
     def _cleanup(self):
         now = time.time()
         with self._lock:
-            while self._last_sendings[0][0] < now - self._interval_seconds:
+            while self._last_sendings and self._last_sendings[0][0] < now - self._interval_seconds:
                 self._last_sendings.popleft()
 
     def _get_error_name(self, event: "Event", hint: "Hint") -> "Optional[str]":
@@ -103,12 +103,11 @@ class ErrorThrottle:
             if event_name == sent_event_name:
                 count_same_errors += 1
 
-        print(f"DEBUG {count_total_errors=} {count_same_errors=} {self._max_total_errors_per_hour=} {self._max_same_errors_per_hour}")
         if count_total_errors >= self._max_total_errors_per_hour:
-            return False
+            return True
 
         if count_same_errors >= self._max_same_errors_per_hour:
-            return False
+            return True
 
         self._last_sendings.append((now, event_name))
-        return True
+        return False
