@@ -2,7 +2,6 @@ import os
 import uuid
 import random
 import socket
-from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib import import_module
@@ -866,7 +865,6 @@ class _Client(BaseClient):
             event["event_id"] = event_id = uuid.uuid4().hex
         event_opt = self._prepare_event(event, hint, scope)
         if event_opt is None:
-            print("NO EVENT OPT")
             return None
 
         # whenever we capture an event we also check if the session needs
@@ -883,12 +881,9 @@ class _Client(BaseClient):
             and not is_checkin
             and not self._should_sample_error(event, hint)
         ):
-            print("ASDASD")
             return None
 
         should_trottle = self._error_throttle.should_throttle(event_opt, hint)
-
-        print(f"SHOULD TROTTLE {should_trottle=}")
 
         if (
             not is_transaction
@@ -900,8 +895,6 @@ class _Client(BaseClient):
             # Мы добавили новую причину "throttle", чтобы было видно, что часть ошибок сознательно отфильтрована троттлингом.
             # if self.transport:
             #     self.transport.record_lost_event("throttle", data_category="error")
-            logger.info(f"Throttled sentry message: ({event_opt}, {hint})")
-            print("TROTTLED")
             return None
 
         attachments = hint.get("attachments")
