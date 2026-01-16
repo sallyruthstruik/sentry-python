@@ -2,6 +2,7 @@ import os
 import uuid
 import random
 import socket
+from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib import import_module
@@ -29,6 +30,7 @@ from sentry_sdk.utils import (
     has_logs_enabled,
     has_metrics_enabled,
 )
+from sentry_sdk._error_throttle import ErrorThrottle
 from sentry_sdk.serializer import serialize
 from sentry_sdk.tracing import trace
 from sentry_sdk.transport import BaseHttpTransport, make_transport
@@ -275,6 +277,7 @@ class _Client(BaseClient):
 
     def __init__(self, *args: "Any", **kwargs: "Any") -> None:
         super(_Client, self).__init__(options=get_options(*args, **kwargs))
+        self._error_throttle = ErrorThrottle()
         self._init_impl()
 
     def __getstate__(self) -> "Any":
@@ -787,6 +790,9 @@ class _Client(BaseClient):
 
         return True
 
+    def _should_throttle_error(self, event: "Event", hint: "Hint") -> bool:
+        return self._error_throttle.should_throttle(event, hint)
+
     def _update_session_from_event(
         self,
         session: "Session",
@@ -868,6 +874,15 @@ class _Client(BaseClient):
             and not is_checkin
             and not self._should_sample_error(event, hint)
         ):
+            return None
+
+        if (
+            not is_transaction
+            and not is_checkin
+            and self._should_throttle_error(event_opt, hint)
+        ):
+            if self.transport:
+                self.transport.record_lost_event("throttle", data_category="error")
             return None
 
         attachments = hint.get("attachments")
