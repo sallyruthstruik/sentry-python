@@ -103,7 +103,7 @@ class ErrorThrottle:
             if event_name == sent_event_name:
                 count_same_errors += 1
 
-        print(f"DEBUG {count_total_errors=} {count_same_errors=}")
+        print(f"DEBUG {count_total_errors=} {count_same_errors=} {self._max_total_errors_per_hour=} {self._max_same_errors_per_hour}")
         if count_total_errors >= self._max_total_errors_per_hour:
             return False
 
