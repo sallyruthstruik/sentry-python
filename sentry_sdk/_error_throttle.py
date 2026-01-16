@@ -1,4 +1,5 @@
 import threading
+import traceback
 import time
 from collections import deque
 
@@ -12,26 +13,42 @@ if False:  # TYPE_CHECKING
 class ErrorThrottle:
     def __init__(
         self,
-        per_error_interval_seconds: float = 60.0,
-        global_interval_seconds: float = 60.0,
-        global_limit: int = 10,
+        max_total_errors_per_hour = 120,
+        max_same_errors_per_hour = 60,
     ) -> None:
-        self._per_error_interval_seconds = per_error_interval_seconds
-        self._global_interval_seconds = global_interval_seconds
-        self._global_limit = global_limit
-        self._per_error_last_sent: "dict[str, float]" = {}
-        self._global_sent_times: "deque[float]" = deque()
+        self._max_total_errors_per_hour = max_total_errors_per_hour
+        self._max_same_errors_per_hour = max_same_errors_per_hour
+        self._last_sendings: "deque[tuple[float, str]]" = deque(maxlen=5000)
         self._lock = threading.Lock()
+        self._interval_seconds = 3600       # 1 hour
+
+    def _cleanup(self):
+        now = time.time()
+        with self._lock:
+            while self._last_sendings[0][0] < now - self._interval_seconds:
+                self._last_sendings.popleft()
 
     def _get_error_name(self, event: "Event", hint: "Hint") -> "Optional[str]":
+        file_location = None
         exc_info = hint.get("exc_info")
         if exc_info is not None:
             error_type = exc_info[0]
             error_type_name = get_type_name(error_type)
             error_module = getattr(error_type, "__module__", None)
+            try:
+                tb = exc_info[2]
+                if tb is not None:
+                    last_frame = traceback.extract_tb(tb)[-1]
+                    file_location = "%s:%s" % (last_frame.filename, last_frame.lineno)
+            except Exception:
+                file_location = None
             if error_module:
-                return "%s.%s" % (error_module, error_type_name)
-            return error_type_name
+                error_name = "%s.%s" % (error_module, error_type_name)
+            else:
+                error_name = error_type_name
+            if file_location:
+                return "%s@%s" % (error_name, file_location)
+            return error_name
 
         exceptions = (event.get("exception") or {}).get("values") or []
         if exceptions:
@@ -40,10 +57,24 @@ class ErrorThrottle:
                 first_exception = first_exception.value or {}
             error_type = first_exception.get("type")
             error_module = first_exception.get("module")
+            stacktrace = first_exception.get("stacktrace") or {}
+            frames = stacktrace.get("frames") or []
+            if frames:
+                last_frame = frames[-1] or {}
+                filename = last_frame.get("filename") or last_frame.get("abs_path")
+                lineno = last_frame.get("lineno")
+                if filename and lineno:
+                    file_location = "%s:%s" % (filename, lineno)
             if error_module and error_type:
-                return "%s.%s" % (error_module, error_type)
-            if error_type:
-                return error_type
+                error_name = "%s.%s" % (error_module, error_type)
+            elif error_type:
+                error_name = error_type
+            else:
+                error_name = None
+            if error_name and file_location:
+                return "%s@%s" % (error_name, file_location)
+            if error_name:
+                return error_name
             error_value = first_exception.get("value")
             if error_value:
                 return error_value
@@ -55,26 +86,29 @@ class ErrorThrottle:
         return None
 
     def should_throttle(self, event: "Event", hint: "Hint") -> bool:
-        now = time.monotonic()
-        with self._lock:
-            while self._global_sent_times and (
-                now - self._global_sent_times[0]
-            ) >= self._global_interval_seconds:
-                self._global_sent_times.popleft()
-            if len(self._global_sent_times) >= self._global_limit:
-                return True
-            self._global_sent_times.append(now)
+        now = time.time()
 
-            error_name = self._get_error_name(event, hint)
-            if not error_name:
-                return False
+        event_name = self._get_error_name(event, hint)
 
-            last_sent = self._per_error_last_sent.get(error_name)
-            if last_sent is not None and (
-                now - last_sent
-            ) < self._per_error_interval_seconds:
-                return True
+        count_total_errors = 0
+        count_same_errors = 0
 
-            self._per_error_last_sent[error_name] = now
+        self._cleanup()
 
-        return False
+        for ts, sent_event_name in self._last_sendings:
+            if ts < now - self._interval_seconds:
+                continue
+
+            count_total_errors += 1
+            if event_name == sent_event_name:
+                count_same_errors += 1
+
+        print(f"DEBUG {count_total_errors=} {count_same_errors=}")
+        if count_total_errors >= self._max_total_errors_per_hour:
+            return False
+
+        if count_same_errors >= self._max_same_errors_per_hour:
+            return False
+
+        self._last_sendings.append((now, event_name))
+        return True

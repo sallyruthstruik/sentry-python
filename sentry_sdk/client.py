@@ -790,9 +790,6 @@ class _Client(BaseClient):
 
         return True
 
-    def _should_throttle_error(self, event: "Event", hint: "Hint") -> bool:
-        return self._error_throttle.should_throttle(event, hint)
-
     def _update_session_from_event(
         self,
         session: "Session",
@@ -846,9 +843,11 @@ class _Client(BaseClient):
 
         :returns: An event ID. May be `None` if there is no DSN set or of if the SDK decided to discard the event for other reasons. In such situations setting `debug=True` on `init()` may help.
         """
+        print("CAPTURE!")
         hint: "Hint" = dict(hint or ())
 
         if not self._should_capture(event, hint, scope):
+            print("NOT CAPTURE")
             return None
 
         profile = event.pop("profile", None)
@@ -858,6 +857,7 @@ class _Client(BaseClient):
             event["event_id"] = event_id = uuid.uuid4().hex
         event_opt = self._prepare_event(event, hint, scope)
         if event_opt is None:
+            print("NO EVENT OPT")
             return None
 
         # whenever we capture an event we also check if the session needs
@@ -874,15 +874,25 @@ class _Client(BaseClient):
             and not is_checkin
             and not self._should_sample_error(event, hint)
         ):
+            print("ASDASD")
             return None
+
+        should_trottle = self._error_throttle.should_throttle(event_opt, hint)
+
+        print(f"SHOULD TROTTLE {should_trottle=}")
 
         if (
             not is_transaction
             and not is_checkin
-            and self._should_throttle_error(event_opt, hint)
+            and should_trottle
         ):
-            if self.transport:
-                self.transport.record_lost_event("throttle", data_category="error")
+            # Это нужно, чтобы SDK учитывал отброшенные события в метрике “lost events”.
+            # Sentry показывает, сколько ошибок не дошло до сервера и по какой причине.
+            # Мы добавили новую причину "throttle", чтобы было видно, что часть ошибок сознательно отфильтрована троттлингом.
+            # if self.transport:
+            #     self.transport.record_lost_event("throttle", data_category="error")
+            logger.info(f"Throttled sentry message: ({event_opt}, {hint})")
+            print("TROTTLED")
             return None
 
         attachments = hint.get("attachments")
